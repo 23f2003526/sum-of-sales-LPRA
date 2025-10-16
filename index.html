@@ -24,12 +24,22 @@
         <option value="AUD">AUD</option>
         <option value="CAD">CAD</option>
       </select>
+
+      <label for="region-filter" class="fs-5 mb-0 ms-3">Region:</label>
+      <select id="region-filter" class="form-select form-select-sm w-auto" aria-label="Region filter">
+        <option value="all" selected>All</option>
+        <option value="north-america">North America</option>
+        <option value="europe">Europe</option>
+        <option value="asia">Asia</option>
+        <option value="australia">Australia</option>
+      </select>
+
       <div class="fs-5 ms-3">
         Active currency: <span id="total-currency">USD</span>
       </div>
     </div>
     <div class="alert alert-primary fs-3 text-center" role="alert">
-      Total Sales: <span id="total-sales">Loading...</span>
+      Total Sales (<span id="region-name">All regions</span>): <span id="total-sales" data-region="all">Loading...</span>
     </div>
 
     <div class="table-responsive">
@@ -59,96 +69,118 @@
       const totalCurrencyEl = document.getElementById('total-currency');
       const totalSalesEl = document.getElementById('total-sales');
       const footerTotalSalesEl = document.getElementById('footer-total-sales');
-      const tableBody = document.querySelector('#product-sales tbody');
+      const productSalesTbody = document.querySelector('#product-sales tbody');
+      const regionFilter = document.getElementById('region-filter');
+      const regionNameEl = document.getElementById('region-name');
 
-      // Sample product sales data in USD (base)
-      const productSalesUSD = [
-        { product: 'Widget', total: 1234.56 },
-        { product: 'Gadget', total: 987.65 },
-        { product: 'Doohickey', total: 456.78 },
-        { product: 'Thingamajig', total: 321.45 },
-        { product: 'Whatsit', total: 654.32 },
-      ];
-
-      let rates = {
-        "USD": 1,
-        "EUR": 0.91,
-        "GBP": 0.77,
-        "JPY": 146.56,
-        "AUD": 1.46,
-        "CAD": 1.33
+      // Currency exchange rates relative to USD
+      const exchangeRates = {
+        USD: 1,
+        EUR: 0.92,
+        GBP: 0.79,
+        JPY: 137.13,
+        AUD: 1.48,
+        CAD: 1.36,
       };
 
-      // Number formatter cache by currency code
-      const formatters = {};
+      // Products sales data: product, sales (USD), region
+      const salesData = [
+        { product: "Laptop", salesUSD: 120000, region: "north-america" },
+        { product: "Smartphone", salesUSD: 175000, region: "europe" },
+        { product: "Tablet", salesUSD: 90000, region: "asia" },
+        { product: "Monitor", salesUSD: 65000, region: "north-america" },
+        { product: "Printer", salesUSD: 30000, region: "europe" },
+        { product: "Headphones", salesUSD: 45000, region: "asia" },
+        { product: "Camera", salesUSD: 40000, region: "australia" },
+        { product: "Smartwatch", salesUSD: 25000, region: "north-america" },
+        { product: "Keyboard", salesUSD: 15000, region: "europe" },
+      ];
 
-      function currencyFormatter(currencyCode) {
-        if (!formatters[currencyCode]) {
-          formatters[currencyCode] = new Intl.NumberFormat(undefined, {
-            style: 'currency',
-            currency: currencyCode,
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          });
-        }
-        return formatters[currencyCode];
+      // Region display names
+      const regionDisplayNames = {
+        "all": "All regions",
+        "north-america": "North America",
+        "europe": "Europe",
+        "asia": "Asia",
+        "australia": "Australia"
+      };
+
+      // Format money with Intl.NumberFormat
+      function formatMoney(value, currency) {
+        return new Intl.NumberFormat(undefined, {
+          style: 'currency',
+          currency,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }).format(value);
       }
 
-      function updateTableAndTotals(selectedCurrency) {
-        const rate = rates[selectedCurrency];
-        if (typeof rate !== 'number' || rate <= 0) return;
+      // Render sales rows filtered by region with converted currency
+      function renderSalesRows(region, currency) {
+        // Clear existing rows
+        productSalesTbody.innerHTML = "";
 
-        // Clear table body
-        tableBody.innerHTML = '';
+        // Filter products per region
+        const filtered = region === 'all'
+          ? salesData
+          : salesData.filter(item => item.region === region);
 
-        // Calculate totals and fill rows
-        let totalSumBase = 0;
-        productSalesUSD.forEach(item => {
-          totalSumBase += item.total;
-          const convertedTotal = item.total * rate;
+        // Map to converted and formatted rows
+        filtered.forEach(({ product, salesUSD }) => {
+          const converted = salesUSD * exchangeRates[currency];
           const tr = document.createElement('tr');
+
           const tdProduct = document.createElement('td');
-          tdProduct.textContent = item.product;
-          const tdTotal = document.createElement('td');
-          tdTotal.textContent = currencyFormatter(selectedCurrency).format(convertedTotal);
+          tdProduct.textContent = product;
+          tdProduct.scope = "row";
+
+          const tdSales = document.createElement('td');
+          tdSales.textContent = formatMoney(converted, currency);
+
           tr.appendChild(tdProduct);
-          tr.appendChild(tdTotal);
-          tableBody.appendChild(tr);
+          tr.appendChild(tdSales);
+          productSalesTbody.appendChild(tr);
         });
 
-        // Update footer total (convert base total)
-        const totalConverted = totalSumBase * rate;
+        return filtered;
+      }
 
-        footerTotalSalesEl.textContent = currencyFormatter(selectedCurrency).format(totalConverted);
+      // Calculate and update totals
+      function updateTotals(region, currency) {
+        const filtered = region === 'all'
+          ? salesData
+          : salesData.filter(item => item.region === region);
+
+        const totalUSD = filtered.reduce((acc, cur) => acc + cur.salesUSD, 0);
+        const convertedTotal = totalUSD * exchangeRates[currency];
+
+        // Update footer total sales cell
+        footerTotalSalesEl.textContent = formatMoney(convertedTotal, currency);
 
         // Update total sales alert
-        totalSalesEl.textContent = currencyFormatter(selectedCurrency).format(totalConverted);
+        totalSalesEl.textContent = formatMoney(convertedTotal, currency);
+        totalSalesEl.dataset.region = region;
 
-        // Update active currency display
+        regionNameEl.textContent = regionDisplayNames[region] || region;
+      }
+
+      // Event handler for currency or region change
+      function handleFilterChange() {
+        const selectedCurrency = currencyPicker.value;
+        const selectedRegion = regionFilter.value;
+
+        renderSalesRows(selectedRegion, selectedCurrency);
+        updateTotals(selectedRegion, selectedCurrency);
         totalCurrencyEl.textContent = selectedCurrency;
       }
 
-      function onCurrencyChange() {
-        const selectedCurrency = currencyPicker.value;
-        updateTableAndTotals(selectedCurrency);
-      }
+      // Initial render
+      (() => {
+        handleFilterChange();
+      })();
 
-      // Initialize app
-      function init() {
-        // Load rates from the included data (could be extended for async fetching)
-        if (!rates || typeof rates !== 'object') {
-          totalSalesEl.textContent = 'Error loading rates';
-          return;
-        }
-
-        // Initialize table and total
-        updateTableAndTotals(currencyPicker.value);
-
-        // Add event listener on currency picker
-        currencyPicker.addEventListener('change', onCurrencyChange);
-      }
-
-      init();
+      currencyPicker.addEventListener('change', handleFilterChange);
+      regionFilter.addEventListener('change', handleFilterChange);
     })();
   </script>
 </body>
