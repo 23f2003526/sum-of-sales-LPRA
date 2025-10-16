@@ -14,6 +14,20 @@
 <body class="bg-light d-flex flex-column justify-content-center align-items-center py-5">
   <div class="container">
     <h1 class="mb-4 text-center">Sales Summary 123123</h1>
+    <div class="d-flex justify-content-center align-items-center gap-3 mb-3">
+      <label for="currency-picker" class="fs-5 mb-0">Currency:</label>
+      <select id="currency-picker" class="form-select form-select-sm w-auto" aria-label="Currency select">
+        <option value="USD" selected>USD</option>
+        <option value="EUR">EUR</option>
+        <option value="GBP">GBP</option>
+        <option value="JPY">JPY</option>
+        <option value="AUD">AUD</option>
+        <option value="CAD">CAD</option>
+      </select>
+      <div class="fs-5 ms-3">
+        Active currency: <span id="total-currency">USD</span>
+      </div>
+    </div>
     <div class="alert alert-primary fs-3 text-center" role="alert">
       Total Sales: <span id="total-sales">Loading...</span>
     </div>
@@ -41,86 +55,143 @@
   </div>
 
   <script>
-    async function fetchAndRenderSalesByProduct() {
+    (function(){
       const totalSalesEl = document.querySelector('#total-sales');
+      const totalCurrencyEl = document.querySelector('#total-currency');
       const tbody = document.querySelector('#product-sales tbody');
       const footerTotalEl = document.querySelector('#footer-total-sales');
+      const currencyPicker = document.querySelector('#currency-picker');
 
-      try {
-        const response = await fetch('attachments/data.csv');
-        if (!response.ok) {
-          totalSalesEl.textContent = 'Error loading data';
-          return;
-        }
-        const text = await response.text();
-        const lines = text.trim().split('\n');
-        if(lines.length < 2) {
-          totalSalesEl.textContent = 'No data';
-          return;
-        }
+      let salesData = null; // { product: totalSalesUSD, ... }
+      let totalSalesUSD = 0;
+      let rates = null; // from rates.json
+      let baseCurrency = 'USD';
 
-        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-        const salesIdx = headers.findIndex(h => h === 'sales');
-        const productIdx = headers.findIndex(h => h === 'product');
-
-        if(salesIdx < 0) {
-          totalSalesEl.textContent = 'No sales column';
-          return;
+      // Format number to currency string with 2 decimals, fixed-width for table
+      function formatCurrency(value, currency) {
+        // Use Intl.NumberFormat for better formatting if available
+        try {
+          return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(value);
+        } catch {
+          return value.toFixed(2) + ' ' + currency;
         }
-        if(productIdx < 0) {
-          totalSalesEl.textContent = 'No product column';
-          return;
-        }
+      }
 
-        // Aggregate sales by product
-        const salesByProduct = new Map();
+      function updateTotalsDisplay(currency) {
+        if(!salesData || !rates) return;
 
-        for(let i=1; i<lines.length; i++){
-          const cols = lines[i].split(',');
-          if(cols.length <= Math.max(productIdx, salesIdx)) continue;
-          const product = cols[productIdx].trim() || 'Unknown';
-          const val = parseFloat(cols[salesIdx]);
-          if(!isNaN(val)) {
-            salesByProduct.set(product, (salesByProduct.get(product) || 0) + val);
-          }
-        }
+        const rate = rates[currency];
+        if(isNaN(rate) || rate <= 0) return;
 
         // Clear tbody
         tbody.innerHTML = '';
-
-        let grandTotal = 0;
-        for(const [product, sum] of salesByProduct.entries()){
+        // Rebuild table rows converted
+        Object.entries(salesData).forEach(([product, amountUSD]) => {
+          const amountConv = amountUSD * rate;
           const tr = document.createElement('tr');
-          const tdProd = document.createElement('td');
-          tdProd.textContent = product;
+          const tdProduct = document.createElement('td');
+          tdProduct.textContent = product;
           const tdSales = document.createElement('td');
-          tdSales.textContent = sum.toFixed(2);
-          tdSales.classList.add('fw-bold');
-          tr.append(tdProd, tdSales);
+          tdSales.textContent = formatCurrency(amountConv, currency);
+          tr.append(tdProduct, tdSales);
           tbody.appendChild(tr);
-          grandTotal += sum;
-        }
+        });
 
-        // If no sales rows (e.g. all invalid data), show no data message row
-        if(tbody.children.length === 0){
-          const tr = document.createElement('tr');
-          const td = document.createElement('td');
-          td.colSpan = 2;
-          td.classList.add('text-muted');
-          td.textContent = 'No valid sales data';
-          tr.appendChild(td);
-          tbody.appendChild(tr);
-        }
+        // Update footer total
+        const totalConv = totalSalesUSD * rate;
+        footerTotalEl.textContent = formatCurrency(totalConv, currency);
 
-        totalSalesEl.textContent = grandTotal.toFixed(2);
-        footerTotalEl.textContent = grandTotal.toFixed(2);
-
-      } catch (error) {
-        totalSalesEl.textContent = 'Error loading data';
+        // Update main total sales display and active currency
+        totalSalesEl.textContent = formatCurrency(totalConv, currency);
+        totalCurrencyEl.textContent = currency;
       }
-    }
 
-    fetchAndRenderSalesByProduct();
+      // Load rates.json and then update display
+      async function loadRatesAndUpdate() {
+        try {
+          const resp = await fetch('attachments/rates.json');
+          if(!resp.ok) throw new Error('Failed to load rates.json');
+          const data = await resp.json();
+          // Ensure USD rate is 1 for safety
+          if(typeof data['USD'] !== 'number' || data['USD'] <= 0) {
+            data['USD'] = 1;
+          }
+          rates = data;
+
+          // If current currency not in rates, fallback to USD
+          if(!rates[currencyPicker.value]) {
+            currencyPicker.value = 'USD';
+          }
+          updateTotalsDisplay(currencyPicker.value);
+        } catch (err) {
+          totalSalesEl.textContent = 'Error loading currency rates';
+        }
+      }
+
+      async function fetchAndRenderSalesByProduct() {
+        totalSalesEl.textContent = 'Loading...';
+        try {
+          const response = await fetch('attachments/data.csv');
+          if (!response.ok) {
+            totalSalesEl.textContent = 'Error loading data';
+            return;
+          }
+          const text = await response.text();
+          const lines = text.trim().split('\n');
+          if(lines.length < 2) {
+            totalSalesEl.textContent = 'No data';
+            return;
+          }
+
+          const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+          const salesIdx = headers.findIndex(h => h === 'sales');
+          const productIdx = headers.findIndex(h => h === 'product');
+
+          if (salesIdx === -1 || productIdx === -1) {
+            totalSalesEl.textContent = 'Required columns missing';
+            return;
+          }
+
+          salesData = {};
+          totalSalesUSD = 0;
+
+          for(let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(',');
+            if(row.length < headers.length) continue;
+            const product = row[productIdx].trim();
+            const salesStr = row[salesIdx].trim();
+            const salesVal = parseFloat(salesStr);
+            if(product === '' || isNaN(salesVal)) continue;
+
+            // Aggregate sales (assume CSV sales values are in USD by default)
+            salesData[product] = (salesData[product] || 0) + salesVal;
+            totalSalesUSD += salesVal;
+          }
+
+          if(Object.keys(salesData).length === 0) {
+            totalSalesEl.textContent = 'No valid data';
+            return;
+          }
+
+          // Load rates and update UI
+          await loadRatesAndUpdate();
+
+        } catch(e) {
+          totalSalesEl.textContent = 'Error processing data';
+        }
+      }
+
+      currencyPicker.addEventListener('change', () => {
+        const selected = currencyPicker.value;
+        if(rates && rates[selected]){
+          updateTotalsDisplay(selected);
+        }
+      });
+
+      // Initialize app
+      fetchAndRenderSalesByProduct();
+
+    })();
   </script>
 </body>
 </html>
